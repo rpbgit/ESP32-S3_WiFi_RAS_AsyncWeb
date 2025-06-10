@@ -405,16 +405,6 @@ void SendXML(AsyncWebServerRequest *request)
 }
 
 // provides a means of sending something to the web page text box.
-// void WebText(const char *instr) {
-//     int infocnt = strlen(InfoBuf);
-//     if (infocnt) 
-//         // if there is something already in there, just append
-//         strcat(InfoBuf, instr);
-//     else {
-//         strcpy(InfoBuf,"ESP32>");
-//         strcat(InfoBuf, instr);
-//     }
-// }
 void WebText(const char *format, ...) {
     // Temporary buffer to hold the formatted string
     static char tempBuf[2048] = {0};
