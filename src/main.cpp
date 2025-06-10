@@ -339,73 +339,69 @@ void SendWebsite(AsyncWebServerRequest *request)
 
 // this function will get the current status of all hardware and create the XML message with status
 // and send it back to the page
+// below is an improved version of SendXML() that uses snprintf for better buffer management
 void SendXML(AsyncWebServerRequest *request)
 {
-//Serial.println(F("SendXML()"));
-    // collect the hardware status that reflects the current state of the buttons/led's
+    // Collect the hardware status that reflects the current state of the buttons/LEDs
     get_hardware_status(RAS_Status);
 
-    // Serial.println("sending xml");
-    strcpy(XML_buf, "<?xml version='1.0'?>\n<Data>\n");
+    // Use a pointer to keep track of the buffer position for efficiency
+    char *ptr = XML_buf;
+    int remaining = sizeof(XML_buf);
 
-    // Add version
-    strcat(XML_buf, "<VER>");
-    strcat(XML_buf, RAS_Status.pSoftwareVersion);
-    strcat(XML_buf, "</VER>\n");
+    // Helper macro to append formatted strings safely
+    #define APPEND(fmt, ...) \
+        ptr += snprintf(ptr, remaining, fmt, ##__VA_ARGS__); \
+        remaining = sizeof(XML_buf) - (ptr - XML_buf);
 
-// TODO: flashify all these string const's
+    // Start XML
+    APPEND("<?xml version='1.0'?>\n<Data>\n");
 
-    // build currently selected radios with 1 or 0
-    strcat(XML_buf, pRas->R1_Status ? "<R1>1</R1>\n" : "<R1>0</R1>\n");
-    strcat(XML_buf, pRas->R2_Status ? "<R2>1</R2>\n" : "<R2>0</R2>\n");
-    strcat(XML_buf, pRas->R3_Status ? "<R3>1</R3>\n" : "<R3>0</R3>\n");
-    strcat(XML_buf, pRas->R4_Status ? "<R4>1</R4>\n" : "<R4>0</R4>\n");
-    
-    // send current status of A1 On/Off
-    strcat(XML_buf, pRas->A1_On_Status ? "<A1_On>1</A1_On>\n" : "<A1_On>0</A1_On>\n");
-    strcat(XML_buf, pRas->A1_Off_Status ? "<A1_Off>1</A1_Off>\n" : "<A1_Off>0</A1_Off>\n");
+    // Add version from RAS_Status or defs.h
+    APPEND("<VER>%s</VER>\n", RAS_Status.pSoftwareVersion);
 
-    // send current status of A2 On/off
-    strcat(XML_buf, pRas->A2_On_Status ? "<A2_On>1</A2_On>\n" : "<A2_On>0</A2_On>\n");
-    strcat(XML_buf, pRas->A2_Off_Status ? "<A2_Off>1</A2_Off>\n" : "<A2_Off>0</A2_Off>\n");
+    // Build currently selected radios with 1 or 0
+    APPEND("<R1>%d</R1>\n", pRas->R1_Status ? 1 : 0);
+    APPEND("<R2>%d</R2>\n", pRas->R2_Status ? 1 : 0);
+    APPEND("<R3>%d</R3>\n", pRas->R3_Status ? 1 : 0);
+    APPEND("<R4>%d</R4>\n", pRas->R4_Status ? 1 : 0);
 
-    // send current status of  : "<ALL_GND>0</ALL_GND>\n");
+    // Send current status of A1 On/Off
+    APPEND("<A1_On>%d</A1_On>\n", pRas->A1_On_Status ? 1 : 0);
+    APPEND("<A1_Off>%d</A1_Off>\n", pRas->A1_Off_Status ? 1 : 0);
 
-    // send current status of Xmit Indicator - true == xmit.
-    strcat(XML_buf,pRas->Xmit_Indicator ? "<Xmit_Ind>1</Xmit_Ind>\n" : "<Xmit_Ind>0</Xmit_Ind>\n");
-    strcat(XML_buf, pRas->ALL_GND_Status ? "<ALL_GND>1</ALL_GND>\n" : "<ALL_GND>0</ALL_GND>\n");
-    
-    // append/build INFO tag from Infobuf string.
-    //  if there is nothing there, dont build the tag.
-    // if(strlen(InfoBuf)) {
-    //     strcat(XML, "<INFO>" );
-    //     strcat(XML, InfoBuf );
-    //     strcat(XML, "</INFO>\n");
-    //     *InfoBuf = 0;     // last thing zero the buffer for the next time
-    // }
-    
-    // 16-Jan-2025 w9zv, added ring buffer to hold multiple INFO messages, prevents overwriting of fixed buffer and crashes.
-     
-    // append/build INFO tag if WebText() queued something up to send, if there is nothing there, dont build the tag.
-    if( RingBuffer.isEmpty() == false ) {
-        strcat(XML_buf + strlen(XML_buf), "<INFO>" );   // append open tag
-        RingBuffer.concat_all(XML_buf + strlen(XML_buf));  // append the contents of the RingBuffer into the XML response buffer.
-        strcat(XML_buf + strlen(XML_buf), "</INFO>\n");  // append close the INFO tag
+    // Send current status of A2 On/Off
+    APPEND("<A2_On>%d</A2_On>\n", pRas->A2_On_Status ? 1 : 0);
+    APPEND("<A2_Off>%d</A2_Off>\n", pRas->A2_Off_Status ? 1 : 0);
+
+    // Send current status of Xmit Indicator and ALL_GND
+    APPEND("<Xmit_Ind>%d</Xmit_Ind>\n", pRas->Xmit_Indicator ? 1 : 0);
+    APPEND("<ALL_GND>%d</ALL_GND>\n", pRas->ALL_GND_Status ? 1 : 0);
+
+    // Append INFO tag from RingBuffer if not empty
+    if (!RingBuffer.isEmpty()) {
+        APPEND("<INFO>");
+        RingBuffer.concat_all(ptr);
+        ptr += strlen(ptr);
+        remaining = sizeof(XML_buf) - (ptr - XML_buf);
+        APPEND("</INFO>\n");
     }
-    RingBuffer.delete_all();  // im done with it, clear it out for the next time.
+    RingBuffer.delete_all();  // Clear for next time
 
-    strcat(XML_buf, "</Data>\n");  // close the XML block
+    // Close XML block
+    APPEND("</Data>\n");
 
-    // wanna see what the XML code looks like?
-    // actually print it to the serial monitor and use some text editor to get the size
-    // then pad and adjust char XML[2048]; above
+    // Print XML to serial monitor for debugging (limit to first 4 times)
     static int x = 0;
-    if(x < 4 ){
+    if (x < 4) {
         Serial.println(XML_buf);
         x++;
     }
 
+    // Send XML response
     request->send(200, "text/xml", XML_buf);
+
+    #undef APPEND // avoid macro redefinition issues
 }
 
 // provides a means of sending something to the web page text box.
