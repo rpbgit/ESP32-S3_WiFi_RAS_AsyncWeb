@@ -1,7 +1,17 @@
+
+/* 
+
+08-Jun-2025 w9zv    v1.0    initial commit of RAS Wifi Async project
+                                                    
+*/
 #include <Arduino.h>
 // #include <EEPROM.h>
 
 #include "defs.h"
+
+// define the version of the code which is displayed on TFT/Serial/and web page. This is the version of the code, not the hardware.
+// pse update this whenver a new version of the code is released.
+constexpr const char* CODE_VERSION_STR = "v5.5";  // a string for the application version number
 
 #define USING_ESP32_S3_DEV_KIT   // if this is NOT defined, we are using a NANO without WiFi/Web etc
 //#define USING_WOKWI_SIMULATOR   // if on simulator must be defined
@@ -184,6 +194,7 @@ void SendMsgToConsole(const char *msg);  // sends to both web and serial console
 
 void setup2()
 {
+    pRas->pSoftwareVersion = CODE_VERSION_STR; // set the code version string in the RAS_Status structure
     // Assign Input Pins
     pinMode(RadBtnKeyIn_1, INPUT_PULLUP);
     pinMode(RadBtnKeyIn_2, INPUT_PULLUP);

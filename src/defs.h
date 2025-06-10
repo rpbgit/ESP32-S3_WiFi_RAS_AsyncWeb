@@ -13,7 +13,8 @@ struct RAS_HW_STATUS_STRUCT {
     bool A2_On_Status;
     bool A2_Off_Status;
     bool ALL_GND_Status;
-bool Xmit_Indicator;
+    bool Xmit_Indicator;
+    const char *pSoftwareVersion;
 };
 
 // Declare the possible valid host commands in meaningful English. Enums start enumerating

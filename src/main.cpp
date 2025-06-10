@@ -348,6 +348,11 @@ void SendXML(AsyncWebServerRequest *request)
     // Serial.println("sending xml");
     strcpy(XML_buf, "<?xml version='1.0'?>\n<Data>\n");
 
+    // Add version
+    strcat(XML_buf, "<VER>");
+    strcat(XML_buf, RAS_Status.pSoftwareVersion);
+    strcat(XML_buf, "</VER>\n");
+
 // TODO: flashify all these string const's
 
     // build currently selected radios with 1 or 0
