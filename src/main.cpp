@@ -181,6 +181,13 @@ void setup()
 
     // upon ESP getting various handler strings, ESP will execute the corresponding handler functions
     // same notion for the following .on calls
+    
+    // These lines register HTTP PUT handlers for specific URL endpoints.
+    // When the ESP32 web server receives a PUT request at one of these endpoints,
+    // it will call the corresponding handler function (e.g., R1Select_handler).
+    // Each handler sets a command (gHostCmd) for the hardware logic and sends a simple HTTP 200 OK response.
+    // This mechanism allows the web page or other clients to control hardware functions (like selecting radios or toggling outputs)
+    // by making HTTP requests to these endpoints.
     server.on("/R1Select", HTTP_PUT, R1Select_handler);
     server.on("/R2Select", HTTP_PUT, R2Select_handler);
     server.on("/R3Select", HTTP_PUT, R3Select_handler);
