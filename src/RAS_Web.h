@@ -181,7 +181,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
     <header>
       <div class="navbar fixed-top">
           <div class="container">
-            <div class="navtitle">RAS 3 WiFi</div>
+            <div class="navtitle" id="headerTitle">RAS 3 WiFi 999999</div>
             <div class="navdata" id = "date">mm/dd/yyyy</div>
             <div class="navheading">DATE</div><br>
             <div class="navdata" id = "time">00:00:00</div>
@@ -401,12 +401,17 @@ console.log((new XMLSerializer()).serializeToString(xmlResponse));  // debug, re
       document.getElementById("ALL_GND").style.backgroundColor=color; 
       //console.log(message);
 
-xmldoc = xmlResponse.getElementsByTagName("Xmit_Ind"); 
-message = xmldoc[0].firstChild.nodeValue;
-message == "1" ? color="#ff0000" : color = "#ffffff";  // either selected red, or white
-document.getElementById("Xmit_Ind").style.fill=color; 
-//console.log(message);
+	  xmldoc = xmlResponse.getElementsByTagName("Xmit_Ind"); 
+	  message = xmldoc[0].firstChild.nodeValue;
+	  message == "1" ? color="#ff0000" : color = "#ffffff";  // either selected red, or white
+	  document.getElementById("Xmit_Ind").style.fill=color; 
+	  //console.log(message);
     
+	  // get the version and put it in the header
+      xmldoc = xmlResponse.getElementsByTagName("VER");
+      message = xmldoc[0].firstChild.nodeValue;
+      document.getElementById("headerTitle").textContent = "RAS3 WiFi " + message ;
+	
     }
     
     // general processing code for the web page to ask for an XML steam

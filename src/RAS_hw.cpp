@@ -1,8 +1,9 @@
 
 /* 
 
-08-Jun-2025 w9zv    v1.0    initial commit of RAS Wifi Async project
-                                                    
+08-Jun-2025 w9zv    v1.0    initial commit of RAS Wifi Async project  (Original build in 2023)      
+06-Jun-2025 WA9FVP	V2.0	Added Network Loss and reconnect logic.
+                                                
 */
 #include <Arduino.h>
 // #include <EEPROM.h>
@@ -11,7 +12,7 @@
 
 // define the version of the code which is displayed on TFT/Serial/and web page. This is the version of the code, not the hardware.
 // pse update this whenver a new version of the code is released.
-constexpr const char* CODE_VERSION_STR = "v5.5";  // a string for the application version number
+constexpr const char* CODE_VERSION_STR = "v2.0";  // a string for the application version number
 
 #define USING_ESP32_S3_DEV_KIT   // if this is NOT defined, we are using a NANO without WiFi/Web etc
 //#define USING_WOKWI_SIMULATOR   // if on simulator must be defined
@@ -119,9 +120,9 @@ void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw );
 #define MAIN_PWR_IS_OFF() ( (digitalRead(Aux1_Out)) == LOW )
 
 // non-blocking delays
-const unsigned long REM_PWR_OFF_DELAY = 15000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
+const unsigned long REM_PWR_OFF_DELAY = 20000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
 const unsigned long BOOT_WAIT_DELAY = 43000; // Wait for radio to Wakeup then Send the "Radio Awake" message
-const unsigned long MAINS_OFF_DELAY = 15000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
+const unsigned long MAINS_OFF_DELAY = 20000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
 const unsigned long MAINS_ON_DELAY = 0;
 
 // macros for when one and only one radio button or KeyIn line is selected... a LOW == selected
@@ -408,7 +409,7 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
             AllGrounded();
             digitalWrite(Relay2_Out, HIGH);
             Serial.println(F("CON::Button2"));
-            WebText(" All Grounded\n");          // <--- Add your Text here, for example  "My Device\n"
+            WebText("Flex6600 To Antenna\n");          // <--- Add your Text here, for example  "My Device\n"
         }
         break;
 
@@ -602,6 +603,7 @@ void Aux1_Handler(HostCmdEnum host_cmd)
                     timerDelay = digitalRead(Aux2_PullDown_FlexRMT_Out) ? MAINS_OFF_DELAY : 0;
                     digitalWrite(Aux2_PullDown_FlexRMT_Out, LOW); // command the flex to goto stby
                     digitalWrite(Aux2_Out, LOW); // led on the box.
+                    WebText(" Flex-6600 shutting Down\n");          // <--- Add your Text here, for example  "My Device\n"
                     Serial.print(F("\tTimerDelay: "));
                     Serial.println(timerDelay, DEC);
                     do_once = true;
@@ -730,6 +732,7 @@ void SendMsgToConsole(const char *msg)
 // we put this here to isolate all hardware related accesses to this file.
 void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw ) 
 {
+
     myhw.R1_Status = RAS_GET_R1_RELAY_STATUS(); //random(2);
     myhw.R2_Status = RAS_GET_R2_RELAY_STATUS(); //random(2);
     myhw.R3_Status = RAS_GET_R3_RELAY_STATUS(); //random(2);
@@ -743,7 +746,8 @@ void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw )
     
     myhw.ALL_GND_Status = NO_RADIO_ANT_SELECTED(); // random(2);
 
-myhw.Xmit_Indicator = ANY_RADIO_SELECTED_OR_KEYED();  // one possible way, maybe look if amp is keyed instead...
+    myhw.Xmit_Indicator = ANY_RADIO_SELECTED_OR_KEYED();  // one possible way, maybe look if amp is keyed instead...
+    myhw.pSoftwareVersion = CODE_VERSION_STR;
 }   
 
 void ReportStatus() // During this reads the status of the outputs

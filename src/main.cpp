@@ -1,32 +1,5 @@
 /*
-  this example will show
-  1. how to use and ESP 32 for reading pins
-  2. building a web page for a client (web browser, smartphone, smartTV) to connect to
-  3. sending data from the ESP to the client to update JUST changed data
-  4. sending data from the web page (like a slider or button press) to the ESP to tell the ESP to do something
-
-  If you are not familiar with HTML, CSS page styling, and javascript, be patient, these code platforms are
-  not intuitive and syntax is very inconsitent between platforms
-
-  I know of 4 ways to update a web page
-  1. send the whole page--very slow updates, causes ugly page redraws and is what you see in most examples
-  2. send XML data to the web page that will update just the changed data--fast updates but older method
-  3. JSON strings which are similar to XML but newer method
-  4. web sockets very very fast updates, but not sure all the library support is available for ESP's
-
-  I use XML here...
-
-  compile options
-  1. esp32 dev module
-  2. upload speed 921600
-  3. cpu speed 240 mhz
-  flash speed 80 mhz
-  flash mode qio
-  flash size 4mb
-  partition scheme default
-
-
-  NOTE if your ESP fails to program press the BOOT button during programm when the IDE is "looking for the ESP"
+main.cpp - project entry point ( with setup() ) manages all network connectivity and web page/updates
 
 */
 #include <Arduino.h>
@@ -48,12 +21,16 @@
 #define PIN_LED 48 // On board LED
 
 int gLongest_loop_time; // so that the hw handler can access it.
+bool bWiFi_Connected = false;
+
 
 // forward ref function prototype
 void SendWebsite(AsyncWebServerRequest *request);
 void SendXML(AsyncWebServerRequest *request);
 void PrintWifiStatus();
 
+
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info);
 void R1Select_handler(AsyncWebServerRequest *request);
 void R2Select_handler(AsyncWebServerRequest *request);
 void R3Select_handler(AsyncWebServerRequest *request);
@@ -76,7 +53,7 @@ void showWiFiNetworksFound(int numNetworks);
 char XML_buf[4096];
 
 // just some buffer holder for char operations
-char buf[512]  = {0};
+//char buf[512]  = {0};
 
 // circular/ring buffer of fixed length strings to hold INFO message before being built into an XML msg
 StringRingBuffer RingBuffer;
@@ -104,6 +81,10 @@ extern RAS_HW_STATUS_STRUCT RAS_Status;
 extern RAS_HW_STATUS_STRUCT *pRas; 
 extern void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw );
 
+
+unsigned long lastReconnectAttempt = 0;
+const unsigned long reconnectInterval = 5000; // 5 seconds interval for reconnection attempts
+
 void setup()
 {
     // standard stuff here
@@ -124,8 +105,9 @@ void setup()
     //  disableCore1WDT();
 
     // if you have this #define USE_INTRANET,  you will connect to your home intranet, again makes debugging easier
-
-    //WiFi.onEvent(WiFiStationConnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
+//w9zv - OPTIONAL this isnt stricly needed, but if you want to call the station connected function, you must register the callback function 
+//with the webserver, and on what even to call it on.  once done debugging, u can comment this out
+WiFi.onEvent(WiFiStationConnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
     WiFi.onEvent(WiFiGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
     
 #ifdef USE_INTRANET
@@ -134,14 +116,16 @@ void setup()
     // 11-JAN-2025 rpb  try a list of AP's as defined in creds.h
     startupWiFiWithList();
     delay(250);
-    Actual_IP = WiFi.localIP();
+
+//Actual_IP = WiFi.localIP();  <- dont need duplicate
+//w9zv  MANDATORY - need the following line uncommented to register the disconnect event handler callback function with the webserver
+//if this isnt done, the function wont get called, and the bWiFi_Connected flag wont get told the wifi disconnected NOR reset the reconnect 
+//timer when it does.
+
+//this line is saying "register this callback function to be called, and when to be called (on the Station Disconnected event) with 
+//the webserver"
+    
     WiFi.onEvent(WiFiStationDisconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-    // WiFi.begin(LOCAL_SSID, LOCAL_PASS);
-    // while (WiFi.status() != WL_CONNECTED) {
-    //     delay(500);
-    //     Serial.print(".");
-    // }
-    // Serial.println("");
     Actual_IP = WiFi.localIP();
 #endif
 
@@ -158,7 +142,7 @@ void setup()
     Serial.println(Actual_IP);
 #endif
     PrintWifiStatus();
-
+delay(1000);
     // these calls will handle data coming back from your web page
     // this one is a page request, upon ESP getting / string the web page will be sent
  
@@ -178,6 +162,8 @@ void setup()
     // upon ESP getting /XML string, ESP will build and send the XML, this is how we refresh
     // just parts of the web page
     server.on("/xml", HTTP_GET, SendXML);
+
+  
 
     // upon ESP getting various handler strings, ESP will execute the corresponding handler functions
     // same notion for the following .on calls
@@ -210,21 +196,32 @@ void setup()
 
 void loop()
 {
-    // these will get initialized every time thru the loop
-    unsigned long this_time = 0;
-    unsigned long loop_begin = millis(); 
+    unsigned long loopBegin = millis();
 
-//HostCmd = HostCmdEnum::NO_OP; // this will get initialized every time thru the loop
+  // Check if WiFi is disconnected and it's time to attempt reconnection
+    if (!bWiFi_Connected && millis() - lastReconnectAttempt >= reconnectInterval) {
+        Serial.println("Attempting to reconnect to WiFi...");
+        WiFi.reconnect();
+        lastReconnectAttempt = millis(); // Reset the timer
+    }
 
-    // your main loop that measures, processes, runs code, etc.
+    // Monitor IP Address every 3 seconds on TFT, see if we lost it
+    static unsigned long lastIntervalTime = 0;
+    if (millis() - lastIntervalTime > 3000) {
+     // PrintWiFiAddressOnTFT(); 
+       lastIntervalTime = millis();
+    }
 
-    // all the hardware management is handled by loop2() in RAS_hw.ino/cpp
+    // All the hardware management is handled by loop2() in xxx_hw.ino/cpp
     loop2(gHostCmd);
 
-    // keep track of the longest exec loop time
-    this_time = millis() - loop_begin;
-    if (this_time > gLongest_loop_time) {
-        gLongest_loop_time = this_time;
+    // Give other threads/tasks a chance
+    delay(2);
+
+    // Now measure elapsed time for the whole loop
+    unsigned long elapsed = millis() - loopBegin;
+    if (elapsed > gLongest_loop_time) {
+        gLongest_loop_time = elapsed;
         Serial.print(F("EXEC_LOOP MAX LATENCY MS: "));
         Serial.println(gLongest_loop_time, DEC);
     }
@@ -232,21 +229,32 @@ void loop()
 }
 
 // wifi event handlers.
-void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info){
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+ // we got connected, but have not yet received an IP address...
   Serial.println("Connected to AP successfully!");
 }
-void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info){
-  //Serial.println("WiFi connected");
-  //Serial.println("IP address: ");
-  //Serial.println(WiFi.localIP());
-  Actual_IP = WiFi.localIP();
+
+void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+    bWiFi_Connected = true; // Only after we get the IP Address, can we do things.
+
+    Serial.print("\tWiFi EVENT_WIFI_STA_GOT_IP address: ");
+    Serial.println(WiFi.localIP());
 }
-void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info){
-  Serial.print("WiFi lost connection. Reason: ");
-  Serial.print(info.wifi_sta_disconnected.reason);
-  Serial.println(" - Trying to Reconnect");
-  WiFi.reconnect();
+
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+    bWiFi_Connected = false;
+
+    Serial.print("Disconnected from WiFi access point");
+    Serial.print("WiFi lost connection. Reason: ");
+    Serial.println(info.wifi_sta_disconnected.reason);
+
+    // Start the reconnection timer
+    lastReconnectAttempt = millis();
 }
+
 // functional message handlers 
 
 // Radio selection handlers
@@ -346,7 +354,8 @@ void SendWebsite(AsyncWebServerRequest *request)
 
 // this function will get the current status of all hardware and create the XML message with status
 // and send it back to the page
-// below is an improved version of SendXML() that uses snprintf for better buffer management
+
+    /// below is an improved version of SendXML() that uses snprintf for better buffer management
 void SendXML(AsyncWebServerRequest *request)
 {
     // Collect the hardware status that reflects the current state of the buttons/LEDs
@@ -404,7 +413,6 @@ void SendXML(AsyncWebServerRequest *request)
         Serial.println(XML_buf);
         x++;
     }
-
     // Send XML response
     request->send(200, "text/xml", XML_buf);
 
@@ -440,7 +448,8 @@ void WebText(const char *format, ...) {
 void startupWiFiWithList()
 {
    // Initialize WiFi
-    WiFi.setHostname(HOSTNAME); // NOTE: MUST be called BEFORE WiFi.Mode() is set else the default is used.
+    WiFi.setHostname(HOSTNAME);// NOTE: MUST be called BEFORE WiFi.Mode() is set else the default is used.
+    delay(2); // allow the WiFi subsystem tasks to run
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
