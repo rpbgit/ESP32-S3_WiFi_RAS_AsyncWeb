@@ -3,7 +3,10 @@
 
 08-Jun-2025 w9zv    v1.0    initial commit of RAS Wifi Async project  (Original build in 2023)      
 06-Jun-2025 WA9FVP	V2.0	Added Network Loss and reconnect logic.
-                                                
+08-Jul-2025 w9zv    v2.1    removed NANO condx compile, fixed to use WOKWI sim again, added gFlexOperationInProgressFlag so that turning the
+                            astron off and other FSM timed Flex operations cannot be pre-empted until completed.  added && MAIN_PWR_IS_ON()  
+                            to Aux2_On
+
 */
 #include <Arduino.h>
 // #include <EEPROM.h>
@@ -12,12 +15,10 @@
 
 // define the version of the code which is displayed on TFT/Serial/and web page. This is the version of the code, not the hardware.
 // pse update this whenver a new version of the code is released.
-constexpr const char* CODE_VERSION_STR = "v2.0";  // a string for the application version number
+constexpr const char* CODE_VERSION_STR = "v2.1";  // a string for the application version number
 
-#define USING_ESP32_S3_DEV_KIT   // if this is NOT defined, we are using a NANO without WiFi/Web etc
-//#define USING_WOKWI_SIMULATOR   // if on simulator must be defined
+//#define USING_WOKWI_SIMULATOR   // if on WOKWI simulator must be defined https://wokwi.com/projects/393426348150643713
 
-#ifdef USING_ESP32_S3_DEV_KIT
 // ESP32 pin defs here.
 // Button Inputs
 #define RadBtnKeyIn_1 4 // connects to front panel Button 1, wire or-ed with KeyIn from xmtr on PCB.
@@ -46,15 +47,17 @@ constexpr const char* CODE_VERSION_STR = "v2.0";  // a string for the applicatio
 #define Aux1_Off_LED 47 // Was Aux1 out
 #define Aux2_Off_LED 21 // Was Aux2 out   //Turns on/off LED on control Box
 
-#ifndef USING_WOKWI_SIMULATOR   // if NOT using the WOKWI simulator...
-extern int gLongest_loop_time; // this is a global in main.cpp, allow access here to respond to request for it
-extern void WebText(const char *format, ...);
-
-#else // using the simulator without the web server stuff.
+#ifdef USING_WOKWI_SIMULATOR   // if using the WOKWI simulator...we have no web or main.cpp, so we need to fake out some of the externs.
 int gLongest_loop_time; // this is a global in main.cpp, allow access here to respond to request for it
 HostCmdEnum gHostCmd = HostCmdEnum::NO_OP;
+
+void setup2(); // forward declaration of setup2() function
+void loop2(HostCmdEnum& myHostCmd); // forward declaration of loop2() function
+
+extern HostCmdEnum gHostCmd;
 // fakeout extern void WebText(const char *); since we dont have the Webserver or main.cpp on a nano
-#define WebText(a)   // a hollow function, generates no code
+//#define WebText(a)   // a hollow function, generates no code
+#define WebText Serial.printf
 
 void setup() {
     Serial.begin(115200); // open serial port at 115200 baud.
@@ -64,54 +67,22 @@ void setup() {
 void loop() {
     loop2(gHostCmd);
 }
-#endif // end of Using simulator
 
-#else // USING NANO
-// NANO Arduino defs here
-// Button Inputs
-#define RadBtnKeyIn_1 2 // connects to front panel Button 1, wire or-ed with KeyIn from xmtr on PCB.
-#define RadBtnKeyIn_2 3 // connects to front panel Button 2, wire or-ed with KeyIn from xmtr on PCB.
-#define RadBtnKeyIn_3 4 // connects to front panel Button 3, wire or-ed with KeyIn from xmtr on PCB.
-#define RadBtnKeyIn_4 5 // connects to front panel Button 4, wire or-ed with KeyIn from xmtr on PCB.
-#define All_Grounded_In 10 // Disconnects the antennas and grounds the radio ports (Button5)
+#else // NORMAL operation on a real ESP32
+extern void WebText(const char *format, ...);
+extern HostCmdEnum gHostCmd;// = HostCmdEnum::NO_OP;
+extern int gLongest_loop_time; // this is a global in main.cpp, allow access here to respond to request for it
+#endif // end of #ifdef USING_WOKWI_SIMULATOR
 
-// Aux Input pins
-#define Aux1_On 6 // Was Aux1on
-#define Aux2_On 7 // Was Aux2on
-#define Aux1_OFF 8 // Was Aux1off
-#define Aux2_OFF 9 // Was Aux2off
-
-// Amplifier and pulldown Output Keying pins
-#define Spare1 11
-#define Amp_Key_Out1 12 // Keys an amplifier
-#define Aux2_PullDown_FlexRMT_Out 13 // A pull down on a Rig with remote On/Off Power
-
-// Transceiver PTT triggers the output pins.
-#define Relay1_Out 14 // Was Relay1
-#define Relay2_Out 15 // Was Relay2
-#define Relay3_Out 16 // Was Relay3
-#define Relay4_Out 17 // Was Relay4
-#define Aux1_Out 18 // Was Aux1 out or A4
-#define Aux2_Out 19 // Was Aux2 out or A5 //Turns on/off LED on control Box
-
-// for reference to a global in another file.
-int gLongest_loop_time; // this is a global in main.cpp, allow access here to respond to request for it
-HostCmdEnum gHostCmd = HostCmdEnum::NO_OP;
-void setup() {
-    Serial.begin(115200); // open serial port at 115200 baud.
-    delay(100);
-    setup2();
-}
-void loop() {
-    loop2(gHostCmd);
-}
-#endif // endif for what processor we are using
 
 // declare the global structure and a pointer to it that is shared between the hardware handling done here
 // and the web page message population and status updates.  
 RAS_HW_STATUS_STRUCT RAS_Status;
 RAS_HW_STATUS_STRUCT *pRas = &RAS_Status; // create a pointer to the RAS_STatus structure
 void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw );
+
+// static file scoped state variable to indicate that a timed Flex operation is in progress
+static bool gFlexOperationInProgressFlag = false;
 
 //
 // Here is an example of what you can do for readability if you wish to exploit the C++ PreProcessor's abilities to create macros
@@ -120,9 +91,14 @@ void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw );
 #define MAIN_PWR_IS_OFF() ( (digitalRead(Aux1_Out)) == LOW )
 
 // non-blocking delays
-const unsigned long REM_PWR_OFF_DELAY = 20000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
-const unsigned long BOOT_WAIT_DELAY = 43000; // Wait for radio to Wakeup then Send the "Radio Awake" message
-const unsigned long MAINS_OFF_DELAY = 20000; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
+#ifdef USING_WOKWI_SIMULATOR  // if we are using the WOKWI simulator, realime is dialated by about 4x also reduce timing to test faster.
+#define DELAY_DIVISOR 10
+#else // normal ESP32 operation
+#define DELAY_DIVISOR 1
+#endif // end of #ifdef USING_WOKWI_SIMULATOR
+const unsigned long REM_PWR_OFF_DELAY = 20000/DELAY_DIVISOR; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
+const unsigned long BOOT_WAIT_DELAY = 43000/DELAY_DIVISOR; // Wait for radio to Wakeup then Send the "Radio Awake" message
+const unsigned long MAINS_OFF_DELAY = 20000/DELAY_DIVISOR; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
 const unsigned long MAINS_ON_DELAY = 0;
 
 // macros for when one and only one radio button or KeyIn line is selected... a LOW == selected
@@ -357,7 +333,7 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
     // Keep track of the current State (it's a variable of a type RadioState)
     static RadioState currState = RadioState::IDLE; // must be a static declaration, so it persists across invocations.
     static bool do_once = false;
-
+    
     static unsigned long timerStart = 0; // timer begin
     static unsigned long timerDelay = 0; // how long to wait.
 
@@ -379,9 +355,10 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
                 do_once = true;
             }
             currState = RadioState::XMIT;
-
+            
             // if AUX2_On is pressed, and its not yet on -or- if a host command to select radio 2 occurs
-        } else if (((digitalRead(Aux2_On) == LOW && digitalRead(Aux2_Out) == LOW)) || host_cmd == HostCmdEnum::AUX_2_ON) {
+        } else if ((((digitalRead(Aux2_On) == LOW && digitalRead(Aux2_Out) == LOW)) || host_cmd == HostCmdEnum::AUX_2_ON) && MAIN_PWR_IS_ON()) {
+            gFlexOperationInProgressFlag = true; // set the global flag to indicate a Flex operation is in progress
             digitalWrite(Aux2_Out, HIGH);
             digitalWrite(Aux2_PullDown_FlexRMT_Out, HIGH);
             Serial.println(F("Radio Booting...")); // informatonal message
@@ -389,12 +366,13 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
             timerDelay = BOOT_WAIT_DELAY;
             Serial.println(F("CON::Aux2 On"));
              WebText(" Flex-6600 is Booting\n");          // <--- Add your Text here, for example  "My Device\n"
-            Serial.print(F("\tTimerDelay: "));
-            Serial.println(timerDelay, DEC);
+             Serial.print(F("\tTimerDelay: "));
+             Serial.println(timerDelay, DEC);
             currState = RadioState::BOOT_WAIT;
 
         } else if ((digitalRead(Aux2_OFF) == LOW && digitalRead(Aux2_Out) == HIGH) || host_cmd == HostCmdEnum::AUX_2_OFF) {
             /////////////////////  Flex Remote Off (Aux2 Off) Button Press //////////////////////////
+            gFlexOperationInProgressFlag = true; // set the global flag to indicate a Flex operation is in progress
             digitalWrite(Aux2_Out, LOW);
             digitalWrite(Aux2_PullDown_FlexRMT_Out, LOW);
             timerStart = millis();
@@ -442,10 +420,12 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
             displayState(F("\tR2IDLE state"));
             do_once = false;
             currState = RadioState::IDLE;
+            gFlexOperationInProgressFlag = false; // clear the global flag to indicate a Flex operation is no longer in progress
         }
         break;
 
     case RadioState::REM_POWER_OFF_WAIT:
+
         if (!do_once) {
             displayState(F("\tR2REM_POWER_OFF_WAIT state"));
             do_once = true;
@@ -457,6 +437,7 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
             displayState(F("\tR2IDLE state"));
             // Move back to idle...
             currState = RadioState::IDLE;
+            gFlexOperationInProgressFlag = false; // clear the global flag to indicate a Flex operation is no longer in progress
         }
         break;
 
@@ -593,6 +574,8 @@ void Aux1_Handler(HostCmdEnum host_cmd)
         // Mains power off requested...
         // if Aux1 OFF button is commanded
         if (digitalRead(Aux1_OFF) == LOW || host_cmd == HostCmdEnum::AUX_1_OFF) {
+            if (gFlexOperationInProgressFlag) return; // dont do anything if a Flex FSM timing operation is in progress
+
             if (NO_RADIO_SELECTED_OR_KEYED()) { // DONT allow power off a radio is keyed ??
                 if (do_once == false) {
                     AllGrounded();
