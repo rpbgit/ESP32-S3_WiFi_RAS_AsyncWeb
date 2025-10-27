@@ -6,6 +6,7 @@
 08-Jul-2025 w9zv    v2.1    removed NANO condx compile, fixed to use WOKWI sim again, added gFlexOperationInProgressFlag so that turning the
                             astron off and other FSM timed Flex operations cannot be pre-empted until completed.  added && MAIN_PWR_IS_ON()  
                             to Aux2_On
+23-Oct-2025 w9zv    v3.0    Added DebouncerClass for debounced button inputs and edge detection, in XMIT state handlers to detect lost relay ownership.
 
 */
 #include <Arduino.h>
@@ -15,7 +16,7 @@
 
 // define the version of the code which is displayed on TFT/Serial/and web page. This is the version of the code, not the hardware.
 // pse update this whenver a new version of the code is released.
-constexpr const char* CODE_VERSION_STR = "v2.1";  // a string for the application version number
+constexpr const char* CODE_VERSION_STR = "v3.0";  // a string for the application version number
 
 //#define USING_WOKWI_SIMULATOR   // if on WOKWI simulator must be defined https://wokwi.com/projects/393426348150643713
 
@@ -101,6 +102,11 @@ const unsigned long BOOT_WAIT_DELAY = 43000/DELAY_DIVISOR; // Wait for radio to 
 const unsigned long MAINS_OFF_DELAY = 20000/DELAY_DIVISOR; // Wait for radio to Sleep Then send the "Radio is Sleeping" message"
 const unsigned long MAINS_ON_DELAY = 0;
 
+// debouncer Class for the button inputs, which also remaps/replaces the macros below to use the debounced inputs
+// comment out this next line to disable the debouncer class and read pins directly.
+#define HAVE_DEBOUNCER_CLASS   // signal that we have the debouncer class available
+
+#ifndef HAVE_DEBOUNCER_CLASS  // if we dont have the debouncer class, define the macros here directly
 // macros for when one and only one radio button or KeyIn line is selected... a LOW == selected
 #define ONLY_RADIO_1_SELECTED_OR_KEYED() ( \
     (digitalRead(RadBtnKeyIn_1) == LOW) && \
@@ -138,12 +144,28 @@ const unsigned long MAINS_ON_DELAY = 0;
     (digitalRead(RadBtnKeyIn_3) == HIGH) && \
     (digitalRead(RadBtnKeyIn_4) == HIGH) )
 
-#define NO_RADIO_ANT_SELECTED() ( \
-    (digitalRead(Relay1_Out) == LOW) && \
-    (digitalRead(Relay2_Out) == LOW) && \
-    (digitalRead(Relay3_Out) == LOW) && \
-    (digitalRead(Relay4_Out) == LOW) )
-
+#else  // we have the debouncer class available
+// Include the debouncer class for reading and debouncing the input buttons
+#define DEBOUNCER_DEFINED // gInputs is defined in the debouncer class header if this is defined
+#include "DebouncerClass.h"   // note  - must be AFTER the pin definitions above
+const auto& ss = gInputs.get(); // a globally available read only snapshot of the current debounced states
+const auto& ee = gInputs.getEdges(); // a globally available read only snapshot of the edges detected on last update()
+// Then act on ss.* (levels) or ee.* (edges) as needed.
+#endif //ifndef HAVE_DEBOUNCER_CLASS
+    
+//Remove this macro:
+// #define NO_RADIO_ANT_SELECTED() ( \
+//     (digitalRead(Relay1_Out) == LOW) && \
+//     (digitalRead(Relay2_Out) == LOW) && \
+//     (digitalRead(Relay3_Out) == LOW) && \
+//     (digitalRead(Relay4_Out) == LOW) )
+// Inline replacement (file-scoped)
+static inline bool noRadioAntSelected() {
+    return digitalRead(Relay1_Out) == LOW &&
+           digitalRead(Relay2_Out) == LOW &&
+           digitalRead(Relay3_Out) == LOW &&
+           digitalRead(Relay4_Out) == LOW;
+}
 #define RAS_GET_R1_RELAY_STATUS() ( (digitalRead(Relay1_Out)) )
 #define RAS_GET_R2_RELAY_STATUS() ( (digitalRead(Relay2_Out)) )
 #define RAS_GET_R3_RELAY_STATUS() ( (digitalRead(Relay3_Out)) )
@@ -229,6 +251,16 @@ void loop2(HostCmdEnum& myHostCmd)
         // Serial.print(F("CMD: ")); Serial.println((int)myHostCmd,DEC);
     }
 
+    #ifdef HAVE_DEBOUNCER_CLASS
+    // for the debouncer class, call update() once per loop to sample and debounce the inputs MANDATORY  
+    gInputs.update();  // refresh debounced inputs, all access to debounced states is via the 'ss' snapshot structure
+
+    bool xtest1 = ss.r1; // example of how to use the debounced inputs, if x is true, button 1 is pressed (active low).
+    if( ss.r1 ) {
+        // button 1 is pressed
+    }   
+    #endif // HAVE_DEBOUNCER_CLASS
+
     // handle any other commands or features not handled by hardware handlers.
     switch (myHostCmd) {
     case HostCmdEnum::STATUS_REQUEST:
@@ -288,11 +320,11 @@ void RadioOne_Handler(HostCmdEnum host_cmd)
             if (do_once == false) {
                 if (digitalRead(Relay1_Out) == LOW){
                     Serial.println(F("CON::Button1")); // send only if we havent yet selected the antenna
-                    WebText(" Receivers to Antenna\n");
+                    SendMsgToConsole(" Receivers to Antenna\n");
                 } 
                 AllGrounded();
                 digitalWrite(Relay1_Out, HIGH);
-                // digitalWrite(Amp_Key_Out1, HIGH);   // no amp on this one yet.
+                digitalWrite(Amp_Key_Out1, LOW);   // per FVP 10/27/2025changed to LOW from HIGH - when R1 becomes xmit capable, return to HIGH
                 do_once = true;
             }
             currState = RadioState::XMIT;
@@ -300,14 +332,21 @@ void RadioOne_Handler(HostCmdEnum host_cmd)
             AllGrounded();
             digitalWrite(Relay1_Out, HIGH);
             Serial.println(F("CON::Button1"));
-            WebText(" Receivers to Antenna\n");
+            SendMsgToConsole(" Receivers to Antenna\n");
         }
         break;
 
     case RadioState::XMIT: // this radio is currently transmitting, handle xmit negation
         displayState("\tR1XMIT state");
-        if ((digitalRead(RadBtnKeyIn_1) == HIGH && digitalRead(Relay1_Out) == HIGH) && do_once == true) {
-            // digitalWrite(Amp_Key_Out1, LOW); // no amp on this one yet.
+        // If another handler grounded or stole the relay, we lost ownership.
+        if (digitalRead(Relay1_Out) == LOW) {
+            do_once = false;
+            displayState(F("\tR1IDLE state (lost relay)"));
+            currState = RadioState::IDLE;
+            break;
+        }
+        if (( !ss.r1 && digitalRead(Relay1_Out) == HIGH) && do_once == true) {
+            //digitalWrite(Amp_Key_Out1, LOW); // no amp on this one yet.
             do_once = false;
             displayState("\tR1IDLE state");
             currState = RadioState::IDLE; // and back to idle...
@@ -393,7 +432,14 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
 
     case RadioState::XMIT: // we are transmitting, handle xmit negation
         displayState(F("\tR2XMIT state"));
-        if ((digitalRead(RadBtnKeyIn_2) == HIGH && digitalRead(Relay2_Out) == HIGH) && do_once == true) {
+        // If another handler grounded or stole the relay, we lost ownership.
+        if (digitalRead(Relay2_Out) == LOW) {
+            do_once = false;
+            displayState(F("\tR2IDLE state (lost relay)"));
+            currState = RadioState::IDLE;
+            break;
+        }
+        if ( ( !ss.r2 && digitalRead(Relay2_Out) == HIGH) && do_once == true) {
             digitalWrite(Amp_Key_Out1, LOW);
             Serial.println(F("CON::LEDBlack"));
             do_once = false;
@@ -425,7 +471,6 @@ void RadioTwo_Handler(HostCmdEnum host_cmd)
         break;
 
     case RadioState::REM_POWER_OFF_WAIT:
-
         if (!do_once) {
             displayState(F("\tR2REM_POWER_OFF_WAIT state"));
             do_once = true;
@@ -487,7 +532,14 @@ void RadioThree_Handler(HostCmdEnum host_cmd)
 
     case RadioState::XMIT: // we are transmitting, handle xmit negation
         displayState("\tR3XMIT state");
-        if ((digitalRead(RadBtnKeyIn_3) == HIGH && digitalRead(Relay3_Out) == HIGH) && do_once == true) {
+        // If another handler grounded or stole the relay, we lost ownership.
+        if (digitalRead(Relay3_Out) == LOW) {
+            do_once = false;
+            displayState(F("\tR3IDLE state (lost relay)"));
+            currState = RadioState::IDLE;
+            break;
+        }
+        if ( ( !ss.r3 && digitalRead(Relay3_Out) == HIGH) && do_once == true) {
             digitalWrite(Amp_Key_Out1, LOW);
             Serial.println(F("CON::LEDBlack"));
             do_once = false;
@@ -539,7 +591,14 @@ void RadioFour_Handler(HostCmdEnum host_cmd)
 
     case RadioState::XMIT: // we are transmitting, handle xmit negation
         displayState("\tR4XMIT state");
-        if ((digitalRead(RadBtnKeyIn_4) == HIGH && digitalRead(Relay4_Out) == HIGH) && do_once == true) {
+        // If another handler grounded or stole the relay, we lost ownership.
+        if (digitalRead(Relay4_Out) == LOW) {
+            do_once = false;
+            displayState(F("\tR4IDLE state (lost relay)"));
+            currState = RadioState::IDLE;
+            break;
+        }
+        if ( ( !ss.r4 && digitalRead(Relay4_Out) == HIGH) && do_once == true) {
             digitalWrite(Amp_Key_Out1, LOW);
             Serial.println(F("CON::LEDBlack"));
             do_once = false;
@@ -654,20 +713,20 @@ void All_Grounded_Handler(HostCmdEnum host_cmd)
     static RadioState currState = RadioState::IDLE; // must be a static declaration, as it persists across invocations.
     static bool do_once = false;
 
-    // handle Radio 1 stuff & the incoming command if needed.
+    // handle all grounded button stuff & the incoming command if needed.
     switch (currState) {
     case RadioState::IDLE: // do the all grounded function
-        if (digitalRead(All_Grounded_In) == LOW && digitalRead(RadBtnKeyIn_1) == HIGH && digitalRead(RadBtnKeyIn_2) == HIGH && digitalRead(RadBtnKeyIn_3) == HIGH || 
-        host_cmd == HostCmdEnum::ALL_GROUNDED) {
+        // if (digitalRead(All_Grounded_In) == LOW && digitalRead(RadBtnKeyIn_1) == HIGH && digitalRead(RadBtnKeyIn_2) == HIGH && digitalRead(RadBtnKeyIn_3) == HIGH || 
+        if ( (ss.allGnd && NO_RADIO_SELECTED_OR_KEYED()) || host_cmd == HostCmdEnum::ALL_GROUNDED) {
             if (do_once == false) {
                 AllGrounded();
                 Serial.println(F("CON::Button5"));
                 do_once = true;
             }
         }
-
-        if (digitalRead(All_Grounded_In) == HIGH) {
-            // switch debounce ??? jack??
+        
+        // if (digitalRead(All_Grounded_In) == HIGH) {
+        if (!ss.allGnd) { // use debounced input
             do_once = false;
         }
         break;
@@ -727,7 +786,7 @@ void get_hardware_status(RAS_HW_STATUS_STRUCT& myhw )
     myhw.A2_On_Status = RAS_GET_A2_OUT_STATUS(); // random(2);
     myhw.A2_Off_Status = 0; // random(2);??????????
     
-    myhw.ALL_GND_Status = NO_RADIO_ANT_SELECTED(); // random(2);
+    myhw.ALL_GND_Status = noRadioAntSelected(); // random(2);
 
     myhw.Xmit_Indicator = ANY_RADIO_SELECTED_OR_KEYED();  // one possible way, maybe look if amp is keyed instead...
     myhw.pSoftwareVersion = CODE_VERSION_STR;
