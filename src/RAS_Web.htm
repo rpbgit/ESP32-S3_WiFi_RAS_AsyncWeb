@@ -1,62 +1,5 @@
-/*
-  OK, ya ready for some fun? HTML + CSS styling + javascript all in and undebuggable environment
-
-  one trick I've learned to how to debug HTML and CSS code.
-
-  get all your HTML code (from html to /html) and past it into this test site
-  muck with the HTML and CSS code until it's what you want
-  https://www.w3schools.com/html/tryit.asp?filename=tryhtml_intro
-
-  No clue how to debug javascrip other that write, compile, upload, refresh, guess, repeat
-
-  I'm using class designators to set styles and id's for data updating
-  for example:
-  the CSS class .tabledata defines with the cell will look like
-  <td><div class="tabledata" id = "switch"></div></td>
-
-  the XML code will update the data where id = "switch"
-  java script then uses getElementById
-  document.getElementById("switch").innerHTML="Switch is OFF";
-
-
-  .. now you can have the class define the look AND the class update the content, but you will then need
-  a class for every data field that must be updated, here's what that will look like
-  <td><div class="switch"></div></td>
-
-  the XML code will update the data where class = "switch"
-  java script then uses getElementsByClassName
-  document.getElementsByClassName("switch")[0].style.color=text_color;
-
-
-  the main general sections of a web page are the following and used here
-
-  <html>
-    <style>
-    // dump CSS style stuff in here
-    </style>
-    <body>
-      <header>
-      // put header code for cute banners here
-      </header>
-      <main>
-      // the buld of your web page contents
-      </main>
-      <footer>
-      // put cute footer (c) 2021 xyz inc type thing
-      </footer>
-    </body>
-    <script>
-    // you java code between these tags
-    </script>
-  </html>
-
-
-*/
-
-// note R"KEYWORD( html page code )KEYWORD"; 
-// again I hate strings, so char is it and this method let's us write naturally
-
-const char PAGE_MAIN[] PROGMEM = R"=====(
+// RAS_Web.htm
+const char PAGE_MAIN[] PROGMEM = R"=====( // do not edit this line, its part of the CPP string literal
 <!DOCTYPE html>
 <html lang="en" class="js-focus-visible">
 
@@ -76,7 +19,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
       height: 40px;
       margin: 0;
       padding: 10px 0px;
-      background-color: #FFF;
+      background-color: #085a47;
       color: #000000;
       border-bottom: 5px solid #293578;
     }
@@ -92,9 +35,10 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
       height: 50px;
       font-family: "Copperplate", "Arial", sans-serif;
       font-size: 35px; 
-      font-weight: bold;
+      font-weight: normal;
       line-height: 50px;
       padding-left: 75px;
+        color: #cbe686;
     }
    .navheading {
      position: fixed;
@@ -105,6 +49,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
      font-weight: bold;
      line-height: 20px;
      padding-right: 20px;
+       color: #cbe686;
    }
    .navdata {
       justify-content: flex-end;
@@ -116,6 +61,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
       font-weight: bold;
       line-height: 20px;
       padding-right: 20px;
+       color: #cbe686;
    }
     .category {
       font-family: "Verdana", "Arial", sans-serif;
@@ -123,13 +69,14 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
       font-size: 22px;   				/* Remote antenna control text */
       line-height: 50px;
       padding: 20px 10px 0px 10px;
-      color: #000000;
+      color: #cbe686;
     }
     .heading {
       font-family: "Verdana", "Arial", sans-serif;
       font-weight: normal;
       font-size: 28px;
       text-align: left;
+      
     }
     .foot {
       font-family: "Verdana", "Arial", sans-serif;
@@ -174,14 +121,23 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
       transform: scale(2);
       border-radius: 10px;
 	  } */
+
+    #RAS3TB {
+    background-color: #2c3e50; /* Dark blue/grey */
+    color: white;              /* Changes the text color so it's readable */
+    border: 2px solid #3498db; /* Optional: adds a nice border */
+    padding: 10px;             /* Optional: gives the text some breathing room */
+}
+
+
   </style>
 
-  <body style="background-color: #c9edf4" onload="process()">
+  <body style="background-color: #416d6e" onload="process()">
 
     <header>
       <div class="navbar fixed-top">
           <div class="container">
-            <div class="navtitle">RAS 3 WiFi</div>
+            <div class="navtitle" id="headerTitle">RAS 3 WiFi 999999</div>
             <div class="navdata" id = "date">mm/dd/yyyy</div>
             <div class="navheading">DATE</div><br>
             <div class="navdata" id = "time">00:00:00</div>
@@ -401,12 +357,17 @@ console.log((new XMLSerializer()).serializeToString(xmlResponse));  // debug, re
       document.getElementById("ALL_GND").style.backgroundColor=color; 
       //console.log(message);
 
-xmldoc = xmlResponse.getElementsByTagName("Xmit_Ind"); 
-message = xmldoc[0].firstChild.nodeValue;
-message == "1" ? color="#ff0000" : color = "#ffffff";  // either selected red, or white
-document.getElementById("Xmit_Ind").style.fill=color; 
-//console.log(message);
+	  xmldoc = xmlResponse.getElementsByTagName("Xmit_Ind"); 
+	  message = xmldoc[0].firstChild.nodeValue;
+	  message == "1" ? color="#ff0000" : color = "#ffffff";  // either selected red, or white
+	  document.getElementById("Xmit_Ind").style.fill=color; 
+	  //console.log(message);
     
+	  // get the version and put it in the header
+      xmldoc = xmlResponse.getElementsByTagName("VER");
+      message = xmldoc[0].firstChild.nodeValue;
+      document.getElementById("headerTitle").textContent = "RAS3 WiFi " + message ;
+	
     }
     
     // general processing code for the web page to ask for an XML steam
@@ -434,4 +395,6 @@ document.getElementById("Xmit_Ind").style.fill=color;
   </script>
 
 </html>
+
+)====="; // CPP string literal, do not edit
 
